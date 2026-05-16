@@ -27,7 +27,62 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+import openpyxl
+from openpyxl import load_workbook
 
+EXCEL_PATH = "ratings_history.xlsx"
+
+def init_excel():
+    """Create Excel file with headers if it doesn't exist."""
+    try:
+        load_workbook(EXCEL_PATH)
+    except FileNotFoundError:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Ratings"
+        ws.append([
+            "Product", "Platform",
+            "C_Persuasiveness", "C_Professionalism", "C_Audience_Fit", "C_Creativity", "C_Avg",
+            "B_Persuasiveness", "B_Professionalism", "B_Audience_Fit", "B_Creativity", "B_Avg",
+            "AI_C_Persuasiveness", "AI_C_Professionalism", "AI_C_Audience_Fit", "AI_C_Creativity", "AI_C_Avg",
+            "AI_B_Persuasiveness", "AI_B_Professionalism", "AI_B_Audience_Fit", "AI_B_Creativity", "AI_B_Avg",
+            "Caption_Simple", "Caption_Structured", "Timestamp"
+        ])
+        wb.save(EXCEL_PATH)
+
+@st.cache_data(ttl=60)
+def load_ratings_from_excel():
+    """Load all ratings from Excel into a DataFrame (cached for 60s)."""
+    try:
+        return pd.read_excel(EXCEL_PATH)
+    except FileNotFoundError:
+        return pd.DataFrame()
+
+def save_rating_to_excel(entry, ai_ratings=None):
+    """Append a rating row to the Excel file and clear cache."""
+    import datetime
+    wb = load_workbook(EXCEL_PATH)
+    ws = wb["Ratings"]
+    simple_scores = entry.get("simple_scores", [0,0,0,0])
+    str_scores    = entry.get("str_scores",    [0,0,0,0])
+    ai_s  = ai_ratings.get("simple_scores", ["-","-","-","-"]) if ai_ratings else ["-","-","-","-"]
+    ai_st = ai_ratings.get("str_scores",    ["-","-","-","-"]) if ai_ratings else ["-","-","-","-"]
+    ai_s_avg  = round(sum(ai_s)/len(ai_s), 2)  if ai_ratings and all(isinstance(x, (int,float)) for x in ai_s)  else "-"
+    ai_st_avg = round(sum(ai_st)/len(ai_st), 2) if ai_ratings and all(isinstance(x, (int,float)) for x in ai_st) else "-"
+    ws.append([
+        entry.get("product",""), entry.get("platform",""),
+        *simple_scores, entry.get("simple_avg",""),
+        *str_scores,    entry.get("str_avg",""),
+        *ai_s, ai_s_avg,
+        *ai_st, ai_st_avg,
+        entry.get("caption_simple",""),
+        entry.get("caption_structured",""),
+        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    ])
+    wb.save(EXCEL_PATH)
+    load_ratings_from_excel.clear()  # clear cache after new save
+
+init_excel()
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
@@ -241,6 +296,8 @@ defaults = {
     "image_mime": "image/jpeg",
     "suggested_keywords": "",
     "ai_ratings": {},
+    "saved_simple_scores": [],
+    "saved_str_scores": [],
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -589,6 +646,9 @@ with tab1:
                     }
                     st.session_state.ratings = entry
                     st.session_state.all_ratings.append(entry)
+                    st.session_state.saved_simple_scores = simple_scores.copy()
+                    st.session_state.saved_str_scores = str_scores.copy()
+                    save_rating_to_excel(entry, st.session_state.ai_ratings or None)
                     st.success("✦ Ratings saved! Head to the Analysis tab." if st.session_state.lang=="en"
                                else "✦ تم حفظ التقييمات! انتقل إلى تبويب التحليل.")
 
@@ -659,8 +719,8 @@ with tab2:
     else:
         r = st.session_state.ratings
         criteria = t("criteria")
-        simple_scores = r["simple_scores"]
-        str_scores = r["str_scores"]
+        simple_scores = st.session_state.saved_simple_scores or r["simple_scores"]
+        str_scores = st.session_state.saved_str_scores or r["str_scores"]
         lang = st.session_state.lang
 
         # ── Human metric cards ──
@@ -858,6 +918,20 @@ with tab3:
 # ═══════════════════════════════════════════
 with tab4:
     st.markdown(f'<div class="section-label {rtl_cls}">{t("export_header")}</div>', unsafe_allow_html=True)
+    
+    df_excel = load_ratings_from_excel()
+    if not df_excel.empty:
+        st.markdown("### 📊 All Saved Ratings" if st.session_state.lang=="en" else "### 📊 كل التقييمات المحفوظة")
+        st.dataframe(df_excel, use_container_width=True, hide_index=True)
+        excel_buf = io.BytesIO()
+        df_excel.to_excel(excel_buf, index=False, engine="openpyxl")
+        st.download_button(
+            "⬇ Download Full Excel History",
+            data=excel_buf.getvalue(),
+            file_name="all_ratings_history.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     if not st.session_state.ratings:
         st.info(t("no_ratings"))

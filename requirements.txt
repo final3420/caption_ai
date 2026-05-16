@@ -7,3 +7,4 @@ Pillow
 openai
 arabic-reshaper
 python-bidi
+openpyxl
