@@ -714,14 +714,43 @@ with tab1:
 with tab2:
     st.markdown(f'<div class="section-label {rtl_cls}">{t("analysis_header")}</div>', unsafe_allow_html=True)
 
-    if not st.session_state.ratings:
+    df_excel = load_ratings_from_excel()
+
+    if df_excel.empty:
         st.info(t("no_ratings"))
     else:
-        r = st.session_state.ratings
-        criteria = t("criteria")
-        simple_scores = st.session_state.saved_simple_scores or r["simple_scores"]
-        str_scores = st.session_state.saved_str_scores or r["str_scores"]
+        last = df_excel.iloc[-1]
         lang = st.session_state.lang
+        criteria = t("criteria")
+
+        # ✅ الـ scores من آخر row في الـ Excel
+        simple_scores = [
+            int(last["C_Persuasiveness"]), int(last["C_Professionalism"]),
+            int(last["C_Audience_Fit"]),   int(last["C_Creativity"])
+        ]
+        str_scores = [
+            int(last["B_Persuasiveness"]), int(last["B_Professionalism"]),
+            int(last["B_Audience_Fit"]),   int(last["B_Creativity"])
+        ]
+        simple_avg = round(sum(simple_scores) / len(simple_scores), 2)
+        str_avg    = round(sum(str_scores)    / len(str_scores),    2)
+
+        # ✅ AI scores من الـ Excel لو موجودة
+        ai_ratings_src = None
+        if "AI_C_Persuasiveness" in df_excel.columns and str(last["AI_C_Persuasiveness"]) not in ["-", "nan", ""]:
+            try:
+                ai_s  = [float(last["AI_C_Persuasiveness"]), float(last["AI_C_Professionalism"]),
+                         float(last["AI_C_Audience_Fit"]),   float(last["AI_C_Creativity"])]
+                ai_st = [float(last["AI_B_Persuasiveness"]), float(last["AI_B_Professionalism"]),
+                         float(last["AI_B_Audience_Fit"]),   float(last["AI_B_Creativity"])]
+                ai_ratings_src = {"simple_scores": ai_s, "str_scores": ai_st,
+                                  "simple_reasoning": "", "str_reasoning": ""}
+            except:
+                ai_ratings_src = None
+
+        # fallback على الـ session لو الـ Excel مفيهوش AI scores
+        if not ai_ratings_src and st.session_state.ai_ratings:
+            ai_ratings_src = st.session_state.ai_ratings
 
         # ── Human metric cards ──
         m_cols = st.columns(len(criteria) + 2)
@@ -731,8 +760,6 @@ with tab2:
             delta_str = f"+{delta}" if delta >= 0 else str(delta)
             with col:
                 st.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{strd}/5</div><div class="{delta_cls}">{delta_str} vs C</div></div>', unsafe_allow_html=True)
-        simple_avg = r["simple_avg"]
-        str_avg = r["str_avg"]
         with m_cols[-2]:
             st.markdown(f'<div class="metric-card" style="border-color:#F59E0B33;"><div class="metric-label">Avg C</div><div class="metric-value" style="color:#F59E0B;">{simple_avg}</div></div>', unsafe_allow_html=True)
         with m_cols[-1]:
@@ -750,16 +777,15 @@ with tab2:
             st.pyplot(bar_chart(simple_scores, str_scores, criteria, lang), use_container_width=True)
 
         # ── AI Rating Charts ──
-        if st.session_state.ai_ratings:
+        if ai_ratings_src:
             st.markdown("---")
             ai_label = "⚡ AI Ratings" if lang == "en" else "⚡ تقييم الذكاء الاصطناعي"
             st.markdown(f'<div style="font-size:11px;color:#818CF8;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;">{ai_label}</div>', unsafe_allow_html=True)
 
-            ai_r = st.session_state.ai_ratings
-            ai_s = ai_r["simple_scores"]
-            ai_st = ai_r["str_scores"]
+            ai_s  = ai_ratings_src["simple_scores"]
+            ai_st = ai_ratings_src["str_scores"]
             ai_simple_avg = round(sum(ai_s) / len(ai_s), 2)
-            ai_str_avg = round(sum(ai_st) / len(ai_st), 2)
+            ai_str_avg    = round(sum(ai_st) / len(ai_st), 2)
 
             # AI metric cards
             ai_m_cols = st.columns(len(criteria) + 2)
@@ -776,19 +802,18 @@ with tab2:
 
             ach1, ach2 = st.columns(2)
             with ach1:
-                # Radar with purple for B
                 labels = fix_arabic_labels(criteria) if lang == "ar" else criteria
                 N = len(labels)
                 angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
-                sv = ai_s + ai_s[:1]
+                sv  = ai_s  + ai_s[:1]
                 stv = ai_st + ai_st[:1]
-                ac = angles + angles[:1]
+                ac  = angles + angles[:1]
                 fig_ai_r, ax_r = plt.subplots(figsize=(4.5, 4.5), subplot_kw=dict(polar=True), facecolor="#0F0F1A")
                 ax_r.set_facecolor("#0F0F1A")
-                leg_s = fix_arabic("بسيط (C)") if lang == "ar" else "Simple (C)"
+                leg_s  = fix_arabic("بسيط (C)")  if lang == "ar" else "Simple (C)"
                 leg_st = fix_arabic("منظّم (B)") if lang == "ar" else "Structured (B)"
-                ax_r.plot(ac, sv, "o-", lw=2, color="#F59E0B", label=leg_s)
-                ax_r.fill(ac, sv, alpha=0.15, color="#F59E0B")
+                ax_r.plot(ac, sv,  "o-", lw=2, color="#F59E0B", label=leg_s)
+                ax_r.fill(ac, sv,  alpha=0.15, color="#F59E0B")
                 ax_r.plot(ac, stv, "o-", lw=2, color="#818CF8", label=leg_st)
                 ax_r.fill(ac, stv, alpha=0.15, color="#818CF8")
                 ax_r.set_xticks(angles)
@@ -811,7 +836,6 @@ with tab2:
                                     title="AI Evaluation" if lang=="en" else fix_arabic("تقييم الذكاء الاصطناعي")),
                           use_container_width=True)
 
-            # AI winner banner
             ai_winner = (("Structured (B)" if lang=="en" else "المنظّم (B)") if ai_str_avg > ai_simple_avg
                         else (("Simple (C)" if lang=="en" else "البسيط (C)") if ai_simple_avg > ai_str_avg
                         else ("Tie" if lang=="en" else "تعادل")))
@@ -827,19 +851,23 @@ with tab2:
         diff = abs(str_avg - simple_avg)
         st.markdown(f'<div class="winner-banner {rtl_cls}"><span style="font-size:1.4rem;">✦</span><div>{t("winner")}: <strong>{winner}</strong> — advantage: +{diff:.2f} pts</div></div>', unsafe_allow_html=True)
 
-        if len(st.session_state.all_ratings) > 1:
+        # ── All Sessions من الـ Excel ──
+        if len(df_excel) > 1:
             st.markdown("---")
             agg_title = "All Sessions" if lang=="en" else "جميع الجلسات"
             st.markdown(f'<div class="section-label {rtl_cls}">{agg_title}</div>', unsafe_allow_html=True)
             rows = []
-            for entry in st.session_state.all_ratings:
+            for _, row in df_excel.iterrows():
+                c_avg = round((row["C_Persuasiveness"] + row["C_Professionalism"] +
+                               row["C_Audience_Fit"] + row["C_Creativity"]) / 4, 2)
+                b_avg = round((row["B_Persuasiveness"] + row["B_Professionalism"] +
+                               row["B_Audience_Fit"] + row["B_Creativity"]) / 4, 2)
                 rows.append({
-                    "Product": entry["product"], "Platform": entry["platform"],
-                    "Simple Avg": entry["simple_avg"], "Structured Avg": entry["str_avg"],
-                    "Winner": "Structured" if entry["str_avg"] > entry["simple_avg"] else "Simple"
+                    "Product": row["Product"], "Platform": row["Platform"],
+                    "Simple Avg": c_avg, "Structured Avg": b_avg,
+                    "Winner": "Structured" if b_avg > c_avg else "Simple"
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
 # ═══════════════════════════════════════════
 # TAB 3 — Batch
 # ═══════════════════════════════════════════
